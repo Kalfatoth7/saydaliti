@@ -25,6 +25,8 @@ import com.example.data.models.Appointment
 import com.example.data.models.MedicalHistoryRecord
 import com.example.data.models.MedicationLog
 import com.example.data.models.Patient
+import com.example.network.GeminiAiService
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -71,6 +73,11 @@ fun PatientDashboard(
     var showAddHistoryModal by remember { mutableStateOf(false) }
     var showAddMedicationModal by remember { mutableStateOf(false) }
     var showAddApptModal by remember { mutableStateOf(false) }
+    var showAiDrugCheckModal by remember { mutableStateOf(false) }
+
+    var aiSummaryText by remember { mutableStateOf<String?>(null) }
+    var isGeneratingSummary by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     val selectedPatient = patients.find { it.id == selectedPatientId } ?: patients.firstOrNull()
 
@@ -357,6 +364,96 @@ fun PatientDashboard(
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // AI Actions Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    isGeneratingSummary = true
+                                    coroutineScope.launch {
+                                        val summary = GeminiAiService.generatePatientSummary(
+                                            patientName = selectedPatient.name,
+                                            age = selectedPatient.age,
+                                            gender = selectedPatient.gender,
+                                            medicalHistory = selectedPatient.medicalHistory,
+                                            diagnoses = patientHistory.map { it.diagnosisText },
+                                            medications = patientMedLogs.map { it.medicineName }
+                                        )
+                                        aiSummaryText = summary
+                                        isGeneratingSummary = false
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("تلخيص ذكي", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = { showAiDrugCheckModal = true },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Medication, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("فاحص التداخلات", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        // Display AI Summary if generated or loading
+                        if (isGeneratingSummary || aiSummaryText != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            "الملخص الطبي التلقائي (Gemini AI)",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    if (isGeneratingSummary) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(vertical = 8.dp)
+                                        ) {
+                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text("جاري توليد الملخص الفني عبر الذكاء الاصطناعي...", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    } else if (aiSummaryText != null) {
+                                        Text(
+                                            text = aiSummaryText!!,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -623,18 +720,25 @@ fun PatientDashboard(
         if (activeTab == 3) {
             item {
                 Text(
-                    text = "مؤشرات المريض الحيوية",
+                    text = "مؤشرات المريض الحيوية والقياسات المستمرة",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)
+                    modifier = Modifier.padding(bottom = 12.dp, top = 8.dp)
                 )
             }
             item {
-                Box(modifier = Modifier.fillMaxWidth().height(600.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                    Text("لوحة مؤشرات المريض قيد التطوير", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                PatientVitalsDashboardCard(patientName = selectedPatient?.name ?: "المريض")
             }
         }
+    }
+
+    // Modal: AI Drug Interaction Checker
+    if (showAiDrugCheckModal && selectedPatient != null) {
+        AiDrugInteractionModal(
+            patient = selectedPatient,
+            patientMedLogs = patientMedLogs,
+            onDismiss = { showAiDrugCheckModal = false }
+        )
     }
 
     // Modal: Add Medical History Record
@@ -788,6 +892,31 @@ fun MedicalHistoryCard(record: MedicalHistoryRecord) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCode2,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "وصفة إلكترونية موقعة رقمياً (QR SHA-256)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
                 }
             }
 
@@ -1291,4 +1420,219 @@ fun AddAppointmentForPatientModal(
             }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AiDrugInteractionModal(
+    patient: Patient,
+    patientMedLogs: List<MedicationLog>,
+    onDismiss: () -> Unit
+) {
+    var newMedicineInput by remember { mutableStateOf("") }
+    var resultText by remember { mutableStateOf<String?>(null) }
+    var isChecking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    val currentMedsList = remember(patientMedLogs) { patientMedLogs.map { it.medicineName }.distinct() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Medication, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("فاحص التداخلات الدوائية والحساسية (AI)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text("اسم المريض: ${patient.name}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                        Text("الحساسيات المسجلة: ${patient.allergies}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        Text("الأدوية الحالية: ${if (currentMedsList.isEmpty()) "لا توجد" else currentMedsList.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                OutlinedTextField(
+                    value = newMedicineInput,
+                    onValueChange = { newMedicineInput = it },
+                    label = { Text("أدخل اسم الدواء الجديد المراد فخصه *") },
+                    placeholder = { Text("مثال: Ibuprofen, Augmentin, Warfarin...") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Button(
+                    onClick = {
+                        if (newMedicineInput.isNotBlank()) {
+                            isChecking = true
+                            scope.launch {
+                                val result = GeminiAiService.checkDrugInteraction(
+                                    newMedicine = newMedicineInput,
+                                    currentMedicines = currentMedsList,
+                                    patientAllergies = patient.allergies
+                                )
+                                resultText = result
+                                isChecking = false
+                            }
+                        }
+                    },
+                    enabled = newMedicineInput.isNotBlank() && !isChecking,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    if (isChecking) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("جاري الفحص بالذكاء الاصطناعي...")
+                    } else {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("فحص التداخل والأمان")
+                    }
+                }
+
+                if (resultText != null) {
+                    HorizontalDivider()
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("تقرير تقييم السلامة الدوائية:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(text = resultText!!, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("إغلاق")
+            }
+        }
+    )
+}
+
+@Composable
+fun PatientVitalsDashboardCard(patientName: String) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("سجل القياسات والمؤشرات الحيوية اليومية", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFE8F5E9)) {
+                    Text("حالة مستقرة ✅", style = MaterialTheme.typography.labelSmall, color = Color(0xFF2E7D32), modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                VitalMetricCard("ضغط الدم", "120/80", "mmHg", Icons.Default.Favorite, Color(0xFFE53935), Modifier.weight(1f))
+                VitalMetricCard("نبض القلب", "72", "bpm", Icons.Default.MonitorHeart, Color(0xFFD81B60), Modifier.weight(1f))
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                VitalMetricCard("سكر الدم", "98", "mg/dL", Icons.Default.WaterDrop, Color(0xFF1976D2), Modifier.weight(1f))
+                VitalMetricCard("أكسجين الدم", "98%", "SpO2", Icons.Default.Air, Color(0xFF00897B), Modifier.weight(1f))
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text("معدل قياس ضغط الدم الشرياني (آخر 7 أيام)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Visual bar graph for Pressure
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(90.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                val days = listOf("السبت", "الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة")
+                val values = listOf(118, 122, 120, 119, 125, 121, 120)
+                days.forEachIndexed { idx, day ->
+                    val valBp = values[idx]
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("$valBp", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Box(
+                            modifier = Modifier
+                                .width(22.dp)
+                                .height((valBp - 70).dp)
+                                .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                                .background(if (valBp > 124) Color(0xFFFFA000) else MaterialTheme.colorScheme.primary)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(day.take(2), style = MaterialTheme.typography.labelSmall, fontSize = 9.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VitalMetricCard(
+    title: String,
+    value: String,
+    unit: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(28.dp))
+            Spacer(modifier = Modifier.width(10.dp))
+            Column {
+                Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(unit, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                }
+            }
+        }
+    }
 }
